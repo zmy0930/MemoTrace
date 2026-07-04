@@ -7,23 +7,30 @@ import {
   GitBranch,
   Globe2,
   HeartPulse,
+  History,
   NotebookText,
+  Network,
   RefreshCcw,
   Send,
-  Sparkles
+  Settings,
+  Sparkles,
+  Trash2
 } from "lucide-react";
 import {
   acceptWikiProposal,
   acceptCandidate,
   askQuestion,
+  deleteCard,
   distillPreferences,
   generateContent,
+  getKnowledgeGraph,
   getProfile,
   getWikiIndex,
   getWikiLog,
   healthCheck,
   listCandidates,
   listCards,
+  listQASessions,
   listStaging,
   listSystemLogs,
   listWikiProposals,
@@ -33,13 +40,16 @@ import {
   reviewHealth,
   runWebCompletion,
   saveFeedback,
-  uploadDocument
+  uploadDocuments
 } from "./api";
 import type {
   AskResponse,
   CardInfo,
   HealthReviewResponse,
+  KnowledgeGraphInfo,
+  ModelSettings,
   PreferenceCandidate,
+  QASessionInfo,
   StagingItemInfo,
   SystemLogInfo,
   UserProfile,
@@ -47,15 +57,25 @@ import type {
   WikiProposalInfo
 } from "./types";
 
-type TabKey = "qa" | "wiki" | "health" | "memory" | "logs" | "generate";
+type TabKey = "qa" | "wiki" | "graph" | "health" | "memory" | "logs" | "generate" | "settings";
+
+const defaultModelSettings: ModelSettings = {
+  apiKey: "",
+  baseUrl: "https://llm-22mos6q60zk2xrra.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+  textModel: "qwen3-vl-plus",
+  visionModel: "qwen3-vl-plus",
+  embeddingModel: "text-embedding-v4"
+};
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof Database }> = [
   { key: "qa", label: "问答溯源", icon: Send },
   { key: "wiki", label: "Wiki", icon: Database },
+  { key: "graph", label: "Graph", icon: Network },
   { key: "health", label: "健康审查", icon: HeartPulse },
   { key: "memory", label: "偏好记忆", icon: Brain },
   { key: "logs", label: "运行日志", icon: Activity },
-  { key: "generate", label: "内容生成", icon: NotebookText }
+  { key: "generate", label: "内容生成", icon: NotebookText },
+  { key: "settings", label: "模型配置", icon: Settings }
 ];
 
 export function App() {
@@ -68,7 +88,18 @@ export function App() {
   const [wikiIndex, setWikiIndex] = useState<WikiPageInfo | null>(null);
   const [wikiLog, setWikiLog] = useState<WikiPageInfo | null>(null);
   const [wikiProposals, setWikiProposals] = useState<WikiProposalInfo[]>([]);
-  const [file, setFile] = useState<File | null>(null);
+  const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraphInfo | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [qaSessions, setQaSessions] = useState<QASessionInfo[]>([]);
+  const [modelSettings, setModelSettings] = useState<ModelSettings>(() => {
+    const saved = localStorage.getItem("tracewiki.modelSettings");
+    if (!saved) return defaultModelSettings;
+    try {
+      return { ...defaultModelSettings, ...JSON.parse(saved) };
+    } catch {
+      return defaultModelSettings;
+    }
+  });
   const [question, setQuestion] = useState("这个知识库目前有哪些核心能力？");
   const [answer, setAnswer] = useState<AskResponse | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -85,14 +116,16 @@ export function App() {
   );
 
   async function refreshAll() {
-    const [cardItems, logItems, profileInfo, pendingItems, indexPage, logPage, proposalItems] = await Promise.all([
+    const [cardItems, logItems, profileInfo, pendingItems, indexPage, logPage, proposalItems, graphInfo, qaSessionItems] = await Promise.all([
       listCards(),
       listSystemLogs(),
       getProfile(),
       listStaging(),
       getWikiIndex(),
       getWikiLog(),
-      listWikiProposals()
+      listWikiProposals(),
+      getKnowledgeGraph(),
+      listQASessions()
     ]);
     setCards(cardItems);
     setLogs(logItems);
@@ -101,6 +134,8 @@ export function App() {
     setWikiIndex(indexPage);
     setWikiLog(logPage);
     setWikiProposals(proposalItems);
+    setKnowledgeGraph(graphInfo);
+    setQaSessions(qaSessionItems);
   }
 
   useEffect(() => {
@@ -110,13 +145,17 @@ export function App() {
       .catch(() => setStatus("未连接 FastAPI 后端"));
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem("tracewiki.modelSettings", JSON.stringify(modelSettings));
+  }, [modelSettings]);
+
   async function handleUpload() {
-    if (!file) return;
+    if (!files.length) return;
     setBusy(true);
     try {
-      const result = await uploadDocument(file);
+      const result = await uploadDocuments(files, modelSettings);
       setStatus(result.message);
-      setFile(null);
+      setFiles([]);
       await refreshAll();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "上传失败");
@@ -128,7 +167,7 @@ export function App() {
   async function handleAsk() {
     setBusy(true);
     try {
-      const result = await askQuestion(question);
+      const result = await askQuestion(question, 5, modelSettings);
       setAnswer(result);
       setStatus(`已生成回答，召回 ${result.evidence.length} 条证据`);
       await refreshAll();
@@ -157,7 +196,7 @@ export function App() {
   async function handleHealth() {
     setBusy(true);
     try {
-      const result = await reviewHealth();
+      const result = await reviewHealth(modelSettings);
       setHealth(result);
       setStatus(`健康审查完成，发现 ${result.issues.length} 个问题`);
       if (result.completion_actions[0]?.query_or_request) {
@@ -200,7 +239,7 @@ export function App() {
   async function handleAcceptWikiProposal(proposalId: string) {
     setBusy(true);
     try {
-      await acceptWikiProposal(proposalId);
+      await acceptWikiProposal(proposalId, modelSettings);
       setStatus("LLM 维护提案已接受并应用");
       await refreshAll();
     } catch (error) {
@@ -218,6 +257,20 @@ export function App() {
       await refreshAll();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "拒绝提案失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteCard(cardId: string) {
+    if (!window.confirm("确认删除这张 Wiki 卡片及其证据索引吗？")) return;
+    setBusy(true);
+    try {
+      await deleteCard(cardId);
+      setStatus("Wiki 卡片已删除，相关证据和向量索引已清理");
+      await refreshAll();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "删除失败");
     } finally {
       setBusy(false);
     }
@@ -259,10 +312,10 @@ export function App() {
       <section className="upload-band">
         <label className="file-picker">
           <FileUp size={18} />
-          <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          <span>{file ? file.name : "选择资料文件"}</span>
+          <input type="file" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
+          <span>{files.length ? `${files.length} 个文件` : "选择资料文件"}</span>
         </label>
-        <button className="primary-button" disabled={!file || busy} onClick={handleUpload} type="button">
+        <button className="primary-button" disabled={!files.length || busy} onClick={handleUpload} type="button">
           摄入并生成 Wiki
         </button>
       </section>
@@ -343,6 +396,12 @@ export function App() {
                   <strong>{card.title}</strong>
                   <span>{card.category} · {card.tags.join(", ")}</span>
                   <p>{card.summary}</p>
+                  <div className="button-row">
+                    <button onClick={() => handleDeleteCard(card.card_id)} disabled={busy} type="button" title="删除 Wiki 卡片">
+                      <Trash2 size={15} />
+                      删除
+                    </button>
+                  </div>
                   <details>
                     <summary>查看 Markdown</summary>
                     <pre>{card.content}</pre>
@@ -380,6 +439,53 @@ export function App() {
             ) : (
               <p className="empty">配置 LLM 后，旧页更新、冲突审查、问答沉淀会先进入这里等待确认。</p>
             )}
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "graph" ? (
+        <section className="workspace two-column">
+          <div className="panel">
+            <h2>Knowledge Graph</h2>
+            <div className="graph-stats">
+              {Object.entries(knowledgeGraph?.stats ?? {}).map(([key, value]) => (
+                <span key={key}>{key}: {value}</span>
+              ))}
+            </div>
+            <h3>Communities</h3>
+            <div className="graph-list compact-graph-list">
+              {(knowledgeGraph?.communities ?? []).map((community) => (
+                <article key={community.id} className="graph-community">
+                  <strong>{community.label}</strong>
+                  <span>{community.size} cards · {community.span_count} spans</span>
+                  <p>{community.card_titles.join(", ")}</p>
+                </article>
+              ))}
+            </div>
+            <h3>Nodes</h3>
+            <div className="graph-list">
+              {(knowledgeGraph?.nodes ?? []).map((node) => (
+                <article key={node.id} className={`graph-node graph-node-${node.type}`}>
+                  <strong>{node.label}</strong>
+                  <span>{node.type}</span>
+                </article>
+              ))}
+            </div>
+          </div>
+          <div className="panel">
+            <h2>Relations</h2>
+            <div className="graph-list">
+              {(knowledgeGraph?.edges ?? []).map((edge) => (
+                <article key={edge.id} className="line-item">
+                  <strong>{edge.type}</strong>
+                  <span>{`${edge.source} -> ${edge.target}`}</span>
+                  <p>{edge.label} · weight {edge.weight.toFixed(2)}</p>
+                </article>
+              ))}
+            </div>
+            {!knowledgeGraph?.nodes.length ? (
+              <p className="empty">Upload knowledge files first. The graph is generated from Wiki cards, SourceSpan evidence, tags, categories, and [[Wiki Links]].</p>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -499,6 +605,67 @@ export function App() {
           <div className="panel">
             <h2>生成结果</h2>
             <pre className="markdown-block">{generated || "选择一种输出类型。"}</pre>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "settings" ? (
+        <section className="workspace two-column">
+          <div className="panel">
+            <h2>模型配置</h2>
+            <div className="settings-grid">
+              <label>
+                <span>API Key</span>
+                <input
+                  type="password"
+                  value={modelSettings.apiKey}
+                  onChange={(event) => setModelSettings({ ...modelSettings, apiKey: event.target.value })}
+                  placeholder="sk-..."
+                />
+              </label>
+              <label>
+                <span>Base URL</span>
+                <input
+                  value={modelSettings.baseUrl}
+                  onChange={(event) => setModelSettings({ ...modelSettings, baseUrl: event.target.value })}
+                />
+              </label>
+              <label>
+                <span>Text Model</span>
+                <input
+                  value={modelSettings.textModel}
+                  onChange={(event) => setModelSettings({ ...modelSettings, textModel: event.target.value })}
+                />
+              </label>
+              <label>
+                <span>Vision Model</span>
+                <input
+                  value={modelSettings.visionModel}
+                  onChange={(event) => setModelSettings({ ...modelSettings, visionModel: event.target.value })}
+                />
+              </label>
+              <label>
+                <span>Embedding Model</span>
+                <input
+                  value={modelSettings.embeddingModel}
+                  onChange={(event) => setModelSettings({ ...modelSettings, embeddingModel: event.target.value })}
+                />
+              </label>
+            </div>
+            <p className="empty">配置保存在浏览器本地，请不要把真实 API Key 提交到仓库。</p>
+          </div>
+          <div className="panel">
+            <h2><History size={18} /> 最近问答</h2>
+            <div className="history-list">
+              {qaSessions.map((session) => (
+                <article className="line-item" key={session.session_id}>
+                  <strong>{session.question}</strong>
+                  <span>{session.created_at} · {session.evidence.length} evidence</span>
+                  <p>{session.answer.slice(0, 260)}</p>
+                </article>
+              ))}
+              {!qaSessions.length ? <p className="empty">还没有问答历史。</p> : null}
+            </div>
           </div>
         </section>
       ) : null}

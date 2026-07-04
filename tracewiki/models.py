@@ -66,6 +66,16 @@ class Answer:
 
 
 @dataclass
+class QASession:
+    session_id: str
+    question: str
+    answer: str
+    evidence: list[dict[str, Any]]
+    graph_mermaid: str
+    created_at: str = field(default_factory=utc_now_iso)
+
+
+@dataclass
 class InteractionLog:
     log_id: str
     question: str

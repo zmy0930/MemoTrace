@@ -4,9 +4,10 @@ from tracewiki.config import Settings, ensure_dirs
 from tracewiki.health_check import review_knowledge_base
 from tracewiki.hybrid_retriever import HybridRetriever
 from tracewiki.llm import ModelClient
-from tracewiki.models import KnowledgeCard, SearchResult, SourceSpan, StagingItem, SystemLog, VectorRecord
+from tracewiki.models import KnowledgeCard, QASession, SearchResult, SourceSpan, StagingItem, SystemLog, VectorRecord
 from tracewiki.personalization import UserProfile, apply_candidate
 from tracewiki.preference_distiller import create_interaction_log, distill_preferences
+from tracewiki.qa import answer_question
 from tracewiki.reranker import heuristic_rerank
 from tracewiki.retriever import LexicalRetriever
 from tracewiki.spans import build_text_spans
@@ -22,6 +23,8 @@ from tracewiki.wiki_maintenance import (
 )
 from tracewiki.wiki_organizer import enrich_card_with_links, render_index_page, render_log_page
 from tracewiki.models import SourceRecord
+from tracewiki.concept_normalizer import normalize_concept
+from tracewiki.knowledge_graph import build_knowledge_graph
 
 
 class FakeClient:
@@ -36,6 +39,11 @@ class FakeClient:
     def chat(self, messages, model=None):
         self.calls.append(messages[-1]["content"])
         return self.text
+
+
+class FailingChatClient(FakeClient):
+    def chat(self, messages, model=None):
+        raise RuntimeError("model temporarily unavailable")
 
 
 def make_settings(tmp_path: Path) -> Settings:
@@ -142,6 +150,90 @@ def test_hybrid_retriever_uses_vector_records_when_lexical_misses(tmp_path):
     assert results
     assert results[0].span_id == "sp-vector"
     assert results[0].evidence[0]["retrieval_method"] == "vector"
+
+
+def test_answer_question_falls_back_when_llm_chat_fails():
+    result = SearchResult(
+        card_id="card-fallback",
+        title="Fallback Answer",
+        snippet="TraceWiki should still answer from stored evidence.",
+        score=0.8,
+        source_path="raw/fallback.md",
+        evidence=[{"source_path": "raw/fallback.md", "locator": "paragraph_or_chunk:1"}],
+    )
+
+    answer = answer_question(
+        "What happens when the model fails?",
+        [result],
+        UserProfile(),
+        FailingChatClient(""),
+    )
+
+    assert "TraceWiki should still answer from stored evidence." in answer.text
+    assert answer.claims
+    assert answer.used_results == [result]
+
+
+def test_store_persists_qa_sessions(tmp_path):
+    settings = make_settings(tmp_path)
+    store = KnowledgeStore(settings.sqlite_path, settings.wiki_dir)
+    session = QASession(
+        session_id="qa-1",
+        question="How does TraceWiki answer?",
+        answer="It answers with traceable evidence.",
+        evidence=[{"source": "raw/a.md"}],
+        graph_mermaid="flowchart TD\n  Q --> A",
+    )
+
+    store.add_qa_session(session)
+    sessions = store.list_qa_sessions()
+
+    assert sessions[0].session_id == "qa-1"
+    assert sessions[0].evidence == [{"source": "raw/a.md"}]
+
+
+def test_delete_card_removes_card_spans_vectors_and_markdown(tmp_path):
+    settings = make_settings(tmp_path)
+    store = KnowledgeStore(settings.sqlite_path, settings.wiki_dir)
+    card = KnowledgeCard(
+        card_id="card-delete",
+        title="Delete Me",
+        summary="Temporary card.",
+        tags=["temp"],
+        category="scratch",
+        source_id="source-delete",
+        source_path="raw/delete.md",
+        content="# Delete Me",
+        evidence=[],
+    )
+    span = SourceSpan(
+        span_id="span-delete",
+        source_id=card.source_id,
+        card_id=card.card_id,
+        source_path=card.source_path,
+        locator="paragraph_or_chunk:1",
+        text="temporary span",
+        span_type="text",
+    )
+    vector = VectorRecord(
+        item_id="span:span-delete",
+        item_type="span",
+        text=span.text,
+        vector=hash_embedding(span.text),
+        metadata={"span_id": span.span_id, "card_id": card.card_id},
+    )
+
+    card_path = store.upsert_card(card)
+    store.replace_spans_for_card(card.card_id, [span])
+    store.upsert_vectors([vector])
+
+    assert card_path.exists()
+    assert store.delete_card(card.card_id)
+
+    assert store.list_cards() == []
+    assert store.list_spans() == []
+    assert store.list_vectors() == []
+    assert not card_path.exists()
 
 
 def test_heuristic_rerank_promotes_more_relevant_evidence():
@@ -500,3 +592,99 @@ def test_apply_candidate_updates_profile():
     candidate = distill_preferences(logs, profile)[0]
     updated = apply_candidate(profile, candidate)
     assert "代码示例" in (updated.preferred_outputs or [])
+def test_concept_normalizer_merges_common_vector_database_terms():
+    assert normalize_concept("向量库") == "vector-database"
+    assert normalize_concept("Vector Database") == "vector-database"
+    assert normalize_concept("FAISS") == "faiss"
+
+
+def test_knowledge_graph_exports_cards_sources_tags_and_wikilinks():
+    rag = KnowledgeCard(
+        card_id="card-rag",
+        title="RAG Pipeline",
+        summary="Retrieval with evidence.",
+        tags=["RAG", "向量库"],
+        category="architecture",
+        source_id="source-rag",
+        source_path="raw/rag.md",
+        content="# RAG Pipeline\n\nUses [[Evidence_Graph|Evidence Graph]] and vector databases.",
+        evidence=[],
+    )
+    evidence = KnowledgeCard(
+        card_id="card-evidence",
+        title="Evidence Graph",
+        summary="Tracks citations.",
+        tags=["Evidence"],
+        category="concept",
+        source_id="source-evidence",
+        source_path="raw/evidence.md",
+        content="# Evidence Graph",
+        evidence=[],
+    )
+    span = SourceSpan(
+        span_id="span-rag",
+        source_id="source-rag",
+        card_id="card-rag",
+        source_path="raw/rag.md",
+        locator="paragraph_or_chunk:1",
+        text="RAG uses retrievable source evidence.",
+        span_type="text",
+    )
+
+    graph = build_knowledge_graph([rag, evidence], [span])
+
+    node_ids = {node["id"] for node in graph["nodes"]}
+    edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in graph["edges"]}
+
+    assert "card:card-rag" in node_ids
+    assert "source:source-rag" in node_ids
+    assert "tag:vector-database" in node_ids
+    assert ("card:card-rag", "card:card-evidence", "wikilink") in edge_keys
+    assert ("card:card-rag", "source:source-rag", "source") in edge_keys
+    assert graph["stats"]["cards"] == 2
+    assert graph["stats"]["sources"] == 2
+    assert graph["stats"]["spans"] == 1
+
+
+def test_knowledge_graph_groups_related_cards_into_communities():
+    rag = KnowledgeCard(
+        card_id="card-rag",
+        title="RAG Pipeline",
+        summary="Retrieval with evidence.",
+        tags=["RAG"],
+        category="architecture",
+        source_id="source-rag",
+        source_path="raw/rag.md",
+        content="# RAG Pipeline\n\nRelated: [[Evidence_Graph|Evidence Graph]]",
+        evidence=[],
+    )
+    evidence = KnowledgeCard(
+        card_id="card-evidence",
+        title="Evidence Graph",
+        summary="Tracks citations.",
+        tags=["RAG"],
+        category="concept",
+        source_id="source-evidence",
+        source_path="raw/evidence.md",
+        content="# Evidence Graph",
+        evidence=[],
+    )
+    unrelated = KnowledgeCard(
+        card_id="card-ui",
+        title="Frontend Notes",
+        summary="UI implementation details.",
+        tags=["React"],
+        category="frontend",
+        source_id="source-ui",
+        source_path="raw/ui.md",
+        content="# Frontend Notes",
+        evidence=[],
+    )
+
+    graph = build_knowledge_graph([rag, evidence, unrelated], [])
+
+    communities = graph["communities"]
+    grouped_ids = [set(item["card_ids"]) for item in communities]
+    assert {"card-rag", "card-evidence"} in grouped_ids
+    assert {"card-ui"} in grouped_ids
+    assert graph["stats"]["communities"] == 2

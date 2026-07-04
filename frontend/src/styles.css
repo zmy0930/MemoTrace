@@ -175,6 +175,35 @@ textarea {
   padding: 0 10px;
 }
 
+.settings-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-grid span {
+  color: #4b5b70;
+  font-size: 13px;
+}
+
+.settings-grid input {
+  border: 1px solid #c9d3e4;
+  min-height: 38px;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+  max-height: 680px;
+  overflow: auto;
+}
+
 .markdown-block,
 .code-block,
 .line-item pre,
@@ -222,6 +251,75 @@ textarea {
   gap: 8px;
   grid-template-columns: minmax(180px, 1fr) auto;
   margin-bottom: 12px;
+}
+
+.graph-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.graph-stats span {
+  background: #edf4ff;
+  border: 1px solid #cbdcf4;
+  color: #24364f;
+  font-size: 13px;
+  padding: 5px 8px;
+}
+
+.graph-list {
+  display: grid;
+  gap: 8px;
+  max-height: 620px;
+  overflow: auto;
+}
+
+.compact-graph-list {
+  max-height: 220px;
+  margin-bottom: 12px;
+}
+
+.graph-community {
+  background: #f8fbff;
+  border: 1px solid #cbdcf4;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.graph-community p {
+  color: #657386;
+  margin: 0;
+}
+
+.graph-node {
+  border: 1px solid #dfe6f1;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.graph-node strong {
+  color: #17202a;
+}
+
+.graph-node span {
+  color: #657386;
+  font-size: 13px;
+}
+
+.graph-node-card {
+  border-left: 4px solid #2563eb;
+}
+
+.graph-node-source {
+  border-left: 4px solid #16a34a;
+}
+
+.graph-node-tag,
+.graph-node-category {
+  border-left: 4px solid #9333ea;
 }
 
 @media (max-width: 920px) {

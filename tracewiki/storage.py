@@ -8,6 +8,7 @@ from .models import (
     InteractionLog,
     KnowledgeCard,
     PreferenceCandidate,
+    QASession,
     SourceRecord,
     SourceSpan,
     StagingItem,
@@ -48,6 +49,15 @@ CREATE TABLE IF NOT EXISTS interaction_logs (
   user_feedback TEXT NOT NULL,
   user_action TEXT NOT NULL,
   accepted INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS qa_sessions (
+  session_id TEXT PRIMARY KEY,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  graph_mermaid TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 
@@ -198,6 +208,28 @@ class KnowledgeStore:
             for row in rows
         ]
 
+    def delete_card(self, card_id: str) -> bool:
+        cards = [card for card in self.list_cards() if card.card_id == card_id]
+        if not cards:
+            return False
+        card = cards[0]
+        with self._connect() as con:
+            con.execute("DELETE FROM cards WHERE card_id = ?", (card_id,))
+            con.execute("DELETE FROM source_spans WHERE card_id = ?", (card_id,))
+            con.execute("DELETE FROM vector_index WHERE item_id = ?", (f"card:{card_id}",))
+            con.execute(
+                "DELETE FROM vector_index WHERE metadata_json LIKE ?",
+                (f'%"card_id": "{card_id}"%',),
+            )
+            con.execute(
+                "DELETE FROM wiki_maintenance_proposals WHERE target_card_id = ?",
+                (card_id,),
+            )
+        card_path = self.wiki_dir / card.filename
+        if card_path.exists():
+            card_path.unlink()
+        return True
+
     def list_sources(self) -> list[SourceRecord]:
         with self._connect() as con:
             rows = con.execute(
@@ -262,6 +294,47 @@ class KnowledgeStore:
                 user_action=row[5],
                 accepted=bool(row[6]),
                 created_at=row[7],
+            )
+            for row in rows
+        ]
+
+    def add_qa_session(self, session: QASession) -> None:
+        with self._connect() as con:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO qa_sessions
+                (session_id, question, answer, evidence_json, graph_mermaid, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    session.question,
+                    session.answer,
+                    json.dumps(session.evidence, ensure_ascii=False),
+                    session.graph_mermaid,
+                    session.created_at,
+                ),
+            )
+
+    def list_qa_sessions(self, limit: int = 50) -> list[QASession]:
+        with self._connect() as con:
+            rows = con.execute(
+                """
+                SELECT session_id, question, answer, evidence_json, graph_mermaid, created_at
+                FROM qa_sessions
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            QASession(
+                session_id=row[0],
+                question=row[1],
+                answer=row[2],
+                evidence=json.loads(row[3]),
+                graph_mermaid=row[4],
+                created_at=row[5],
             )
             for row in rows
         ]

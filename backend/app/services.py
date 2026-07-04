@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,3 +23,24 @@ def get_store() -> KnowledgeStore:
     settings = get_settings()
     return KnowledgeStore(settings.sqlite_path, settings.wiki_dir)
 
+
+def settings_with_model_overrides(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    text_model: str | None = None,
+    vision_model: str | None = None,
+    embedding_model: str | None = None,
+) -> Settings:
+    settings = get_settings()
+    return replace(
+        settings,
+        openai_api_key=api_key.strip() if api_key and api_key.strip() else settings.openai_api_key,
+        openai_base_url=base_url.strip() if base_url and base_url.strip() else settings.openai_base_url,
+        text_model=text_model.strip() if text_model and text_model.strip() else settings.text_model,
+        vision_model=vision_model.strip() if vision_model and vision_model.strip() else settings.vision_model,
+        embedding_model=(
+            embedding_model.strip()
+            if embedding_model and embedding_model.strip()
+            else settings.embedding_model
+        ),
+    )

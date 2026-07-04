@@ -1,8 +1,12 @@
 import type {
   AskResponse,
+  BatchUploadResponse,
   CardInfo,
   HealthReviewResponse,
+  KnowledgeGraphInfo,
+  ModelSettings,
   PreferenceCandidate,
+  QASessionInfo,
   StagingItemInfo,
   SystemLogInfo,
   UploadResponse,
@@ -26,11 +30,22 @@ export async function healthCheck() {
   return request<{ status: string }>("/health");
 }
 
-export async function uploadDocument(file: File) {
+export async function uploadDocument(file: File, settings?: ModelSettings) {
   const form = new FormData();
   form.append("file", file);
   return request<UploadResponse>("/api/documents/upload", {
     method: "POST",
+    headers: modelHeaders(settings),
+    body: form
+  });
+}
+
+export async function uploadDocuments(files: File[], settings?: ModelSettings) {
+  const form = new FormData();
+  files.forEach((file) => form.append("files", file));
+  return request<BatchUploadResponse>("/api/documents/upload/batch", {
+    method: "POST",
+    headers: modelHeaders(settings),
     body: form
   });
 }
@@ -47,28 +62,55 @@ export async function getWikiLog() {
   return request<WikiPageInfo>("/api/wiki/log");
 }
 
+export async function getKnowledgeGraph() {
+  return request<KnowledgeGraphInfo>("/api/wiki/graph");
+}
+
 export async function listWikiProposals() {
   return request<WikiProposalInfo[]>("/api/wiki/proposals");
 }
 
-export async function acceptWikiProposal(proposalId: string) {
-  return request<{ status: string }>(`/api/wiki/proposals/${proposalId}/accept`, { method: "POST" });
+export async function acceptWikiProposal(proposalId: string, settings?: ModelSettings) {
+  return request<{ status: string }>(`/api/wiki/proposals/${proposalId}/accept`, {
+    method: "POST",
+    headers: modelHeaders(settings)
+  });
 }
 
 export async function rejectWikiProposal(proposalId: string) {
   return request<{ status: string }>(`/api/wiki/proposals/${proposalId}/reject`, { method: "POST" });
 }
 
-export async function askQuestion(question: string, topK = 5) {
-  return request<AskResponse>("/api/qa/ask", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, top_k: topK })
-  });
+export async function deleteCard(cardId: string) {
+  return request<{ status: string }>(`/api/wiki/cards/${cardId}`, { method: "DELETE" });
 }
 
-export async function reviewHealth() {
-  return request<HealthReviewResponse>("/api/health/review");
+export async function askQuestion(question: string, topK = 5, settings?: ModelSettings) {
+  try {
+    return await request<AskResponse>("/api/qa/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...modelHeaders(settings) },
+      body: JSON.stringify({ question, top_k: topK })
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "提问失败";
+    return {
+      answer: `提问失败：${message}\n\n请确认 FastAPI 后端已启动，并检查模型配置里的 API Key、Base URL 和模型名称。`,
+      claims: [],
+      graph_mermaid: "",
+      evidence: []
+    };
+  }
+}
+
+export async function listQASessions() {
+  return request<QASessionInfo[]>("/api/qa/sessions");
+}
+
+export async function reviewHealth(settings?: ModelSettings) {
+  return request<HealthReviewResponse>("/api/health/review", {
+    headers: modelHeaders(settings)
+  });
 }
 
 export async function runWebCompletion(query: string, limit = 3) {
@@ -128,4 +170,15 @@ export async function rejectCandidate(candidateId: string) {
 
 export async function generateContent(kind: "note" | "report" | "ppt" | "mindmap") {
   return request<{ kind: string; content: string }>(`/api/generate/${kind}`);
+}
+
+function modelHeaders(settings?: ModelSettings): Record<string, string> {
+  if (!settings) return {};
+  const headers: Record<string, string> = {};
+  if (settings.apiKey.trim()) headers["X-LLM-Api-Key"] = settings.apiKey.trim();
+  if (settings.baseUrl.trim()) headers["X-LLM-Base-Url"] = settings.baseUrl.trim();
+  if (settings.textModel.trim()) headers["X-LLM-Text-Model"] = settings.textModel.trim();
+  if (settings.visionModel.trim()) headers["X-LLM-Vision-Model"] = settings.visionModel.trim();
+  if (settings.embeddingModel.trim()) headers["X-LLM-Embedding-Model"] = settings.embeddingModel.trim();
+  return headers;
 }

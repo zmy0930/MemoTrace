@@ -12,16 +12,14 @@ def answer_question(
     client: ModelClient,
 ) -> Answer:
     if not results:
-        text = (
-            "当前知识库没有检索到足够证据。建议上传相关资料，或在知识审查中选择联网补全公开资料。"
-        )
+        text = "当前知识库没有检索到足够证据。建议上传相关资料，或在知识审查中选择联网补全公开资料。"
         return Answer(text=text, claims=[], used_results=[])
 
-    llm_text = generate_with_llm(question, results, profile, client)
-    if llm_text:
-        text = llm_text
-    else:
-        text = generate_fallback_answer(question, results, profile)
+    try:
+        llm_text = generate_with_llm(question, results, profile, client)
+    except Exception:
+        llm_text = ""
+    text = llm_text or generate_fallback_answer(question, results, profile)
     claims = [
         Claim(
             text=result.snippet,
@@ -74,7 +72,7 @@ def generate_fallback_answer(
     profile: UserProfile,
 ) -> str:
     lines = [
-        f"基于当前知识库，问题“{question}”可从以下证据回答：",
+        f"基于当前知识库，问题“{question}”可以从以下证据回答：",
         "",
     ]
     for index, result in enumerate(results[:3], start=1):
@@ -84,4 +82,3 @@ def generate_fallback_answer(
         lines.append("")
         lines.append("以上回答仅基于已入库资料；未检索到的内容不会被当作事实补充。")
     return "\n".join(lines)
-

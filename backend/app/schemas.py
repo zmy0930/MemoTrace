@@ -32,6 +32,40 @@ class WikiPageInfo(BaseModel):
     content: str
 
 
+class GraphNodeInfo(BaseModel):
+    id: str
+    label: str
+    type: str
+    data: dict[str, Any]
+
+
+class GraphEdgeInfo(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str
+    label: str
+    weight: float
+    data: dict[str, Any]
+
+
+class GraphCommunityInfo(BaseModel):
+    id: str
+    label: str
+    card_ids: list[str]
+    card_titles: list[str]
+    size: int
+    span_count: int
+    tags: list[str]
+
+
+class KnowledgeGraphInfo(BaseModel):
+    nodes: list[GraphNodeInfo]
+    edges: list[GraphEdgeInfo]
+    communities: list[GraphCommunityInfo]
+    stats: dict[str, int]
+
+
 class WikiProposalInfo(BaseModel):
     proposal_id: str
     proposal_type: str
@@ -45,6 +79,11 @@ class WikiProposalInfo(BaseModel):
 
 class UploadResponse(BaseModel):
     card: CardInfo
+    message: str
+
+
+class BatchUploadResponse(BaseModel):
+    cards: list[CardInfo]
     message: str
 
 
@@ -66,6 +105,15 @@ class AskResponse(BaseModel):
     claims: list[dict[str, Any]]
     graph_mermaid: str
     evidence: list[EvidenceResult]
+
+
+class QASessionInfo(BaseModel):
+    session_id: str
+    question: str
+    answer: str
+    evidence: list[dict[str, Any]]
+    graph_mermaid: str
+    created_at: str
 
 
 class HealthIssueInfo(BaseModel):
