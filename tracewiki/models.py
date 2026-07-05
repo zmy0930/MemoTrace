@@ -100,6 +100,21 @@ class PreferenceCandidate:
 
 
 @dataclass
+class MemoryItem:
+    memory_id: str
+    user_id: str
+    memory_type: str
+    content: str
+    confidence: float
+    source: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    status: str = "active"
+    support_count: int = 1
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+
+
+@dataclass
 class SourceSpan:
     span_id: str
     source_id: str

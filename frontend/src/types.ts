@@ -50,6 +50,41 @@ export interface KnowledgeGraphInfo {
   stats: Record<string, number>;
 }
 
+export type GraphNodeType =
+  | "CommunityNode"
+  | "KnowledgePointNode"
+  | "TaskNode"
+  | "EvidenceNode"
+  | "EntityNode"
+  | "DraftNode";
+
+export interface VisualGraphNode {
+  id: string;
+  text: string;
+  type: GraphNodeType;
+  data: Record<string, unknown>;
+}
+
+export interface VisualGraphLine {
+  id?: string;
+  from: string;
+  to: string;
+  text?: string;
+  type?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface VisualGraphData {
+  rootId?: string;
+  nodes: VisualGraphNode[];
+  lines: VisualGraphLine[];
+}
+
+export interface VisualGraphResponse {
+  graph: VisualGraphData;
+  stats: Record<string, number | boolean>;
+}
+
 export interface WikiProposalInfo {
   proposal_id: string;
   proposal_type: string;
@@ -84,6 +119,8 @@ export interface AskResponse {
   claims: Record<string, unknown>[];
   graph_mermaid: string;
   evidence: EvidenceResult[];
+  memories: MemoryInfo[];
+  memory_updates: MemoryInfo[];
 }
 
 export interface QASessionInfo {
@@ -147,6 +184,20 @@ export interface PreferenceCandidate {
   confidence: number;
   status: string;
   created_at: string;
+}
+
+export interface MemoryInfo {
+  memory_id: string;
+  user_id: string;
+  memory_type: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  confidence: number;
+  source: string;
+  status: string;
+  support_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UserProfile {

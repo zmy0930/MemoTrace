@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic import Field
 
 
 class SourceInfo(BaseModel):
@@ -66,6 +67,47 @@ class KnowledgeGraphInfo(BaseModel):
     stats: dict[str, int]
 
 
+class VisualGraphNode(BaseModel):
+    id: str
+    text: str
+    type: str
+    data: dict[str, Any]
+
+
+class VisualGraphLine(BaseModel):
+    id: str | None = None
+    from_: str = Field(alias="from")
+    to: str
+    text: str = ""
+    type: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"populate_by_name": True}
+
+
+class VisualGraphData(BaseModel):
+    rootId: str | None = None
+    nodes: list[VisualGraphNode]
+    lines: list[VisualGraphLine]
+
+
+class VisualGraphStats(BaseModel):
+    nodes: int
+    lines: int
+    documents: int
+    segments: int
+    points: int
+    relations: int
+    evidence: int
+    communities: int
+    rebuild_required: bool = False
+
+
+class VisualGraphResponse(BaseModel):
+    graph: VisualGraphData
+    stats: VisualGraphStats
+
+
 class WikiProposalInfo(BaseModel):
     proposal_id: str
     proposal_type: str
@@ -90,6 +132,7 @@ class BatchUploadResponse(BaseModel):
 class AskRequest(BaseModel):
     question: str
     top_k: int = 5
+    user_id: str = "default"
 
 
 class EvidenceResult(BaseModel):
@@ -105,6 +148,8 @@ class AskResponse(BaseModel):
     claims: list[dict[str, Any]]
     graph_mermaid: str
     evidence: list[EvidenceResult]
+    memories: list[dict[str, Any]] = Field(default_factory=list)
+    memory_updates: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class QASessionInfo(BaseModel):
@@ -167,6 +212,37 @@ class InteractionFeedbackRequest(BaseModel):
     user_feedback: str = ""
     user_action: str = "accepted"
     accepted: bool = True
+    user_id: str = "default"
+
+
+class MemoryInfo(BaseModel):
+    memory_id: str
+    user_id: str
+    memory_type: str
+    content: str
+    metadata: dict[str, Any]
+    confidence: float
+    source: str
+    status: str
+    support_count: int
+    created_at: str
+    updated_at: str
+
+
+class MemoryCreateRequest(BaseModel):
+    user_id: str = "default"
+    memory_type: str = "response_preference"
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.7
+    source: str = "manual"
+
+
+class MemoryUpdateRequest(BaseModel):
+    content: str | None = None
+    metadata: dict[str, Any] | None = None
+    confidence: float | None = None
+    status: str | None = None
 
 
 class PreferenceCandidateInfo(BaseModel):

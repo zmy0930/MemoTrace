@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 
-from backend.app.schemas import CardInfo, KnowledgeGraphInfo, WikiPageInfo, WikiProposalInfo
+from backend.app.schemas import CardInfo, KnowledgeGraphInfo, VisualGraphResponse, WikiPageInfo, WikiProposalInfo
 from backend.app.services import get_store
 from backend.app.services import get_settings
 from backend.app.services import settings_with_model_overrides
-from tracewiki.knowledge_graph import build_knowledge_graph
+from tracewiki.knowledge_graph import build_graph_view, build_knowledge_graph
 from tracewiki.llm import ModelClient
 from tracewiki.models import KnowledgeCard, SourceSpan
 from tracewiki.vector_index import build_vector_records
@@ -44,6 +44,17 @@ def get_knowledge_graph() -> KnowledgeGraphInfo:
     store = get_store()
     graph = build_knowledge_graph(store.list_cards(), store.list_spans(limit=5000))
     return KnowledgeGraphInfo(**graph)
+
+
+@router.get("/graph/view", response_model=VisualGraphResponse)
+def get_knowledge_graph_view(
+    view: str = Query(default="clustered", pattern="^(raw|clustered|focus)$"),
+    community_id: str | None = None,
+    limit: int = Query(default=300, ge=1, le=1000),
+) -> VisualGraphResponse:
+    store = get_store()
+    graph = build_knowledge_graph(store.list_cards(), store.list_spans(limit=5000))
+    return VisualGraphResponse(**build_graph_view(graph, view=view, community_id=community_id, limit=limit))
 
 
 @router.delete("/cards/{card_id}", response_model=dict[str, str])

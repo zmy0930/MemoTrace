@@ -260,6 +260,82 @@ textarea {
   margin-bottom: 12px;
 }
 
+.graph-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.graph-mode-bar button.active {
+  background: #17202a;
+  border-color: #17202a;
+  color: #ffffff;
+}
+
+.kg-canvas-shell {
+  border: 1px solid #dfe6f1;
+  margin: 10px 0 14px;
+  overflow: hidden;
+}
+
+.kg-canvas {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.kg-canvas-bg {
+  fill: #f8fbff;
+}
+
+.kg-line line {
+  stroke: #9aaabd;
+  stroke-width: 1.2;
+}
+
+.kg-line.connected line {
+  stroke: #145c9e;
+  stroke-width: 2;
+}
+
+.kg-line text {
+  fill: #657386;
+  font-size: 10px;
+  pointer-events: none;
+  text-anchor: middle;
+}
+
+.kg-node {
+  cursor: pointer;
+}
+
+.kg-node circle {
+  stroke-width: 2;
+}
+
+.kg-node.selected circle,
+.kg-node.neighbor circle {
+  filter: drop-shadow(0 3px 5px rgba(20, 92, 158, 0.25));
+  stroke-width: 3;
+}
+
+.kg-node text {
+  pointer-events: none;
+  text-anchor: middle;
+}
+
+.kg-node-type {
+  fill: #657386;
+  font-size: 10px;
+}
+
+.kg-node-label {
+  fill: #17202a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .graph-stats span {
   background: #edf4ff;
   border: 1px solid #cbdcf4;

@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from tracewiki.config import Settings, load_settings
+from tracewiki.memory import MemoryService
 from tracewiki.storage import KnowledgeStore
 
 
@@ -22,6 +23,11 @@ def get_settings() -> Settings:
 def get_store() -> KnowledgeStore:
     settings = get_settings()
     return KnowledgeStore(settings.sqlite_path, settings.wiki_dir)
+
+
+@lru_cache(maxsize=1)
+def get_memory_service() -> MemoryService:
+    return MemoryService(get_settings().sqlite_path)
 
 
 def settings_with_model_overrides(

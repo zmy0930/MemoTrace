@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException
 
 from backend.app.schemas import AskRequest, AskResponse, EvidenceResult, QASessionInfo
-from backend.app.services import get_store, settings_with_model_overrides
+from backend.app.services import get_memory_service, get_store, settings_with_model_overrides
 from tracewiki.evidence_graph import build_evidence_graph, result_table
 from tracewiki.hybrid_retriever import HybridRetriever
 from tracewiki.llm import ModelClient
@@ -33,6 +33,7 @@ def ask(
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+    user_id = payload.user_id.strip() or "default"
 
     store = get_store()
     settings = settings_with_model_overrides(
@@ -51,7 +52,7 @@ def ask(
         store,
         "question_received",
         "Received user question",
-        {"question": question, "card_count": len(cards), "span_count": len(spans), "vector_count": len(vectors)},
+        {"user_id": user_id, "question": question, "card_count": len(cards), "span_count": len(spans), "vector_count": len(vectors)},
     )
     results = HybridRetriever(cards, spans, vectors, client).search(question, limit=max(payload.top_k * 3, 10))
     results = rerank_results(question, results, client, limit=payload.top_k)
@@ -66,7 +67,16 @@ def ask(
             "wiki_guided": True,
         },
     )
-    answer = answer_question(question, results, profile, client)
+    memory_service = get_memory_service()
+    memories = memory_service.search(user_id=user_id, query=question)
+    if memories:
+        record_event(
+            store,
+            "memory_retrieval_completed",
+            f"Retrieved {len(memories)} user memories",
+            {"user_id": user_id, "memory_ids": [item.memory_id for item in memories]},
+        )
+    answer = answer_question(question, results, profile, client, memories=memories)
     proposals = propose_answer_capture(question, answer.text, cards, client)
     for proposal in proposals:
         store.add_wiki_proposal(proposal)
@@ -97,11 +107,21 @@ def ask(
             graph_mermaid=graph_mermaid,
         )
     )
+    memory_updates = memory_service.extract_and_update(user_id=user_id, question=question, answer=answer.text)
+    if memory_updates:
+        record_event(
+            store,
+            "memory_updated",
+            f"Updated {len(memory_updates)} user memories from this QA turn",
+            {"user_id": user_id, "memory_ids": [item.memory_id for item in memory_updates]},
+        )
     return AskResponse(
         answer=answer.text,
         claims=claims,
         graph_mermaid=graph_mermaid,
         evidence=evidence,
+        memories=[item.__dict__ for item in memories],
+        memory_updates=[item.__dict__ for item in memory_updates],
     )
 
 

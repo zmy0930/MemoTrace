@@ -4,7 +4,8 @@ from tracewiki.config import Settings, ensure_dirs
 from tracewiki.health_check import review_knowledge_base
 from tracewiki.hybrid_retriever import HybridRetriever
 from tracewiki.llm import ModelClient
-from tracewiki.models import KnowledgeCard, QASession, SearchResult, SourceSpan, StagingItem, SystemLog, VectorRecord
+from tracewiki.memory import MemoryService
+from tracewiki.models import KnowledgeCard, MemoryItem, QASession, SearchResult, SourceSpan, StagingItem, SystemLog, VectorRecord
 from tracewiki.personalization import UserProfile, apply_candidate
 from tracewiki.preference_distiller import create_interaction_log, distill_preferences
 from tracewiki.qa import answer_question
@@ -24,7 +25,7 @@ from tracewiki.wiki_maintenance import (
 from tracewiki.wiki_organizer import enrich_card_with_links, render_index_page, render_log_page
 from tracewiki.models import SourceRecord
 from tracewiki.concept_normalizer import normalize_concept
-from tracewiki.knowledge_graph import build_knowledge_graph
+from tracewiki.knowledge_graph import build_graph_view, build_knowledge_graph
 
 
 class FakeClient:
@@ -688,3 +689,62 @@ def test_knowledge_graph_groups_related_cards_into_communities():
     assert {"card-rag", "card-evidence"} in grouped_ids
     assert {"card-ui"} in grouped_ids
     assert graph["stats"]["communities"] == 2
+
+
+def test_knowledge_graph_exports_clustered_and_focus_visual_views():
+    rag = KnowledgeCard(
+        card_id="card-rag",
+        title="RAG Pipeline",
+        summary="Retrieval with evidence.",
+        tags=["RAG"],
+        category="architecture",
+        source_id="source-rag",
+        source_path="raw/rag.md",
+        content="# RAG Pipeline\n\nRelated: [[Evidence_Graph|Evidence Graph]]",
+        evidence=[],
+    )
+    evidence = KnowledgeCard(
+        card_id="card-evidence",
+        title="Evidence Graph",
+        summary="Tracks citations.",
+        tags=["RAG"],
+        category="concept",
+        source_id="source-evidence",
+        source_path="raw/evidence.md",
+        content="# Evidence Graph",
+        evidence=[],
+    )
+
+    graph = build_knowledge_graph([rag, evidence], [])
+    clustered = build_graph_view(graph, view="clustered")
+    focus = build_graph_view(graph, view="focus", community_id=clustered["graph"]["nodes"][0]["id"])
+
+    assert clustered["graph"]["nodes"][0]["type"] == "CommunityNode"
+    assert clustered["stats"]["communities"] == 1
+    assert any(node["type"] == "KnowledgePointNode" for node in focus["graph"]["nodes"])
+    assert any(line["type"] in {"wikilink", "community_relation"} for line in focus["graph"]["lines"])
+
+
+def test_memory_service_extracts_searches_and_guides_fallback_answer(tmp_path):
+    service = MemoryService(tmp_path / "kb.sqlite")
+    service.extract_and_update(
+        "u1",
+        "回答请先给结论，复杂对比用表格。",
+        "ok",
+        feedback="以后短一点，最好表格对比。",
+        action="make_shorter",
+    )
+    memories = service.search("u1", "RAG 对比方案", limit=5)
+    result = SearchResult(
+        card_id="card-rag",
+        title="RAG",
+        snippet="RAG uses retrieval and citations.",
+        score=0.8,
+        source_path="raw/rag.md",
+        evidence=[{"source_path": "raw/rag.md"}],
+    )
+    answer = answer_question("RAG 怎么选型？", [result], UserProfile(), ModelClient(make_settings(tmp_path)), memories=memories)
+
+    assert memories
+    assert any("先给结论" in item.content or "表格" in item.content for item in memories)
+    assert "| 证据 |" in answer.text or answer.text.startswith("结论：")

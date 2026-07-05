@@ -4,6 +4,7 @@ import type {
   CardInfo,
   HealthReviewResponse,
   KnowledgeGraphInfo,
+  MemoryInfo,
   ModelSettings,
   PreferenceCandidate,
   QASessionInfo,
@@ -11,6 +12,7 @@ import type {
   SystemLogInfo,
   UploadResponse,
   UserProfile,
+  VisualGraphResponse,
   WikiPageInfo,
   WikiProposalInfo
 } from "./types";
@@ -66,6 +68,14 @@ export async function getKnowledgeGraph() {
   return request<KnowledgeGraphInfo>("/api/wiki/graph");
 }
 
+export type KnowledgeGraphView = "raw" | "clustered" | "focus";
+
+export async function getKnowledgeGraphView(view: KnowledgeGraphView = "clustered", communityId?: string | null) {
+  const params = new URLSearchParams({ view, limit: "300" });
+  if (communityId) params.set("community_id", communityId);
+  return request<VisualGraphResponse>(`/api/wiki/graph/view?${params.toString()}`);
+}
+
 export async function listWikiProposals() {
   return request<WikiProposalInfo[]>("/api/wiki/proposals");
 }
@@ -85,12 +95,12 @@ export async function deleteCard(cardId: string) {
   return request<{ status: string }>(`/api/wiki/cards/${cardId}`, { method: "DELETE" });
 }
 
-export async function askQuestion(question: string, topK = 5, settings?: ModelSettings) {
+export async function askQuestion(question: string, topK = 5, settings?: ModelSettings, userId = "default") {
   try {
     return await request<AskResponse>("/api/qa/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...modelHeaders(settings) },
-      body: JSON.stringify({ question, top_k: topK })
+      body: JSON.stringify({ question, top_k: topK, user_id: userId })
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "提问失败";
@@ -98,7 +108,9 @@ export async function askQuestion(question: string, topK = 5, settings?: ModelSe
       answer: `提问失败：${message}\n\n请确认 FastAPI 后端已启动，并检查模型配置里的 API Key、Base URL 和模型名称。`,
       claims: [],
       graph_mermaid: "",
-      evidence: []
+      evidence: [],
+      memories: [],
+      memory_updates: []
     };
   }
 }
@@ -137,6 +149,14 @@ export async function getProfile() {
   return request<UserProfile>("/api/preferences/profile");
 }
 
+export async function listMemories(userId = "default") {
+  return request<MemoryInfo[]>(`/api/preferences/memories?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function deleteMemory(memoryId: string) {
+  return request<{ status: string }>(`/api/preferences/memories/${memoryId}`, { method: "DELETE" });
+}
+
 export async function saveFeedback(payload: {
   question: string;
   answer_summary: string;
@@ -144,6 +164,7 @@ export async function saveFeedback(payload: {
   user_feedback: string;
   user_action: string;
   accepted: boolean;
+  user_id?: string;
 }) {
   return request<{ status: string }>("/api/preferences/feedback", {
     method: "POST",

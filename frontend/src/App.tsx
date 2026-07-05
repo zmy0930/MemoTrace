@@ -21,15 +21,18 @@ import {
   acceptCandidate,
   askQuestion,
   deleteCard,
+  deleteMemory,
   distillPreferences,
   generateContent,
   getKnowledgeGraph,
+  getKnowledgeGraphView,
   getProfile,
   getWikiIndex,
   getWikiLog,
   healthCheck,
   listCandidates,
   listCards,
+  listMemories,
   listQASessions,
   listStaging,
   listSystemLogs,
@@ -40,19 +43,24 @@ import {
   reviewHealth,
   runWebCompletion,
   saveFeedback,
+  type KnowledgeGraphView,
   uploadDocuments
 } from "./api";
+import { GraphCanvas } from "./GraphCanvas";
 import type {
   AskResponse,
   CardInfo,
   HealthReviewResponse,
   KnowledgeGraphInfo,
+  MemoryInfo,
   ModelSettings,
   PreferenceCandidate,
   QASessionInfo,
   StagingItemInfo,
   SystemLogInfo,
   UserProfile,
+  VisualGraphNode,
+  VisualGraphResponse,
   WikiPageInfo,
   WikiProposalInfo
 } from "./types";
@@ -89,8 +97,13 @@ export function App() {
   const [wikiLog, setWikiLog] = useState<WikiPageInfo | null>(null);
   const [wikiProposals, setWikiProposals] = useState<WikiProposalInfo[]>([]);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraphInfo | null>(null);
+  const [visualGraph, setVisualGraph] = useState<VisualGraphResponse | null>(null);
+  const [graphView, setGraphView] = useState<KnowledgeGraphView>("clustered");
+  const [focusedCommunityId, setFocusedCommunityId] = useState<string | null>(null);
+  const [selectedGraphNode, setSelectedGraphNode] = useState<VisualGraphNode | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [qaSessions, setQaSessions] = useState<QASessionInfo[]>([]);
+  const [memories, setMemories] = useState<MemoryInfo[]>([]);
   const [modelSettings, setModelSettings] = useState<ModelSettings>(() => {
     const saved = localStorage.getItem("tracewiki.modelSettings");
     if (!saved) return defaultModelSettings;
@@ -115,8 +128,8 @@ export function App() {
     [answer]
   );
 
-  async function refreshAll() {
-    const [cardItems, logItems, profileInfo, pendingItems, indexPage, logPage, proposalItems, graphInfo, qaSessionItems] = await Promise.all([
+  async function refreshAll(nextGraphView: KnowledgeGraphView = graphView, nextCommunityId: string | null = focusedCommunityId) {
+    const [cardItems, logItems, profileInfo, pendingItems, indexPage, logPage, proposalItems, graphInfo, visualGraphInfo, qaSessionItems, memoryItems] = await Promise.all([
       listCards(),
       listSystemLogs(),
       getProfile(),
@@ -125,7 +138,9 @@ export function App() {
       getWikiLog(),
       listWikiProposals(),
       getKnowledgeGraph(),
-      listQASessions()
+      getKnowledgeGraphView(nextGraphView, nextCommunityId),
+      listQASessions(),
+      listMemories()
     ]);
     setCards(cardItems);
     setLogs(logItems);
@@ -135,7 +150,9 @@ export function App() {
     setWikiLog(logPage);
     setWikiProposals(proposalItems);
     setKnowledgeGraph(graphInfo);
+    setVisualGraph(visualGraphInfo);
     setQaSessions(qaSessionItems);
+    setMemories(memoryItems);
   }
 
   useEffect(() => {
@@ -167,7 +184,7 @@ export function App() {
   async function handleAsk() {
     setBusy(true);
     try {
-      const result = await askQuestion(question, 5, modelSettings);
+      const result = await askQuestion(question, 5, modelSettings, "default");
       setAnswer(result);
       setStatus(`已生成回答，召回 ${result.evidence.length} 条证据`);
       await refreshAll();
@@ -186,11 +203,34 @@ export function App() {
       answer_type: "technical_explanation",
       user_feedback: feedback,
       user_action: feedbackAction,
-      accepted: feedbackAction !== "not_helpful"
+      accepted: feedbackAction !== "not_helpful",
+      user_id: "default"
     });
     setFeedback("");
     setStatus("反馈已保存，可进入偏好记忆蒸馏");
     await refreshAll();
+  }
+
+  async function handleGraphViewChange(nextView: KnowledgeGraphView, nextCommunityId: string | null = null) {
+    setGraphView(nextView);
+    setFocusedCommunityId(nextCommunityId);
+    const result = await getKnowledgeGraphView(nextView, nextCommunityId);
+    setVisualGraph(result);
+    setSelectedGraphNode(result.graph.nodes[0] ?? null);
+  }
+
+  function handleSelectGraphNode(node: VisualGraphNode) {
+    setSelectedGraphNode(node);
+    if (node.type === "CommunityNode") {
+      const communityId = String(node.data.community_id ?? node.id);
+      setFocusedCommunityId(communityId);
+    }
+  }
+
+  async function handleDeleteMemory(memoryId: string) {
+    await deleteMemory(memoryId);
+    setMemories(await listMemories());
+    setStatus("长期记忆已删除");
   }
 
   async function handleHealth() {
@@ -303,7 +343,7 @@ export function App() {
         <div className="metrics" aria-label="知识库指标">
           <span><Database size={16} />{cards.length} Wiki</span>
           <span><GitBranch size={16} />{spanEvidenceCount} Span</span>
-          <button className="icon-button" type="button" onClick={refreshAll} title="刷新">
+          <button className="icon-button" type="button" onClick={() => refreshAll()} title="刷新">
             <RefreshCcw size={18} />
           </button>
         </div>
@@ -447,11 +487,25 @@ export function App() {
         <section className="workspace two-column">
           <div className="panel">
             <h2>Knowledge Graph</h2>
+            <div className="graph-mode-bar">
+              <button className={graphView === "clustered" ? "active" : ""} onClick={() => handleGraphViewChange("clustered")} type="button">
+                社区视图
+              </button>
+              <button className={graphView === "focus" ? "active" : ""} onClick={() => handleGraphViewChange("focus", focusedCommunityId)} type="button">
+                聚焦展开
+              </button>
+              <button className={graphView === "raw" ? "active" : ""} onClick={() => handleGraphViewChange("raw")} type="button">
+                原始节点
+              </button>
+            </div>
             <div className="graph-stats">
               {Object.entries(knowledgeGraph?.stats ?? {}).map(([key, value]) => (
                 <span key={key}>{key}: {value}</span>
               ))}
             </div>
+            {visualGraph ? (
+              <GraphCanvas graph={visualGraph.graph} selectedNodeId={selectedGraphNode?.id ?? null} onSelectNode={handleSelectGraphNode} />
+            ) : null}
             <h3>Communities</h3>
             <div className="graph-list compact-graph-list">
               {(knowledgeGraph?.communities ?? []).map((community) => (
@@ -473,6 +527,21 @@ export function App() {
             </div>
           </div>
           <div className="panel">
+            <h2>Node Inspector</h2>
+            {selectedGraphNode ? (
+              <article className="line-item">
+                <strong>{selectedGraphNode.text}</strong>
+                <span>{selectedGraphNode.type}</span>
+                <p>{String(selectedGraphNode.data.summary ?? selectedGraphNode.data.content ?? "")}</p>
+                {selectedGraphNode.type === "CommunityNode" ? (
+                  <button onClick={() => handleGraphViewChange("focus", String(selectedGraphNode.data.community_id ?? selectedGraphNode.id))} type="button">
+                    展开这个社区
+                  </button>
+                ) : null}
+              </article>
+            ) : (
+              <p className="empty">点击图谱节点查看详情。</p>
+            )}
             <h2>Relations</h2>
             <div className="graph-list">
               {(knowledgeGraph?.edges ?? []).map((edge) => (
@@ -550,6 +619,18 @@ export function App() {
           <div className="panel">
             <h2>当前用户画像</h2>
             <pre className="code-block">{profile ? JSON.stringify(profile, null, 2) : "未加载"}</pre>
+            <h3>长期记忆</h3>
+            <div className="history-list">
+              {memories.map((memory) => (
+                <article className="line-item" key={memory.memory_id}>
+                  <strong>{memory.memory_type}</strong>
+                  <span>confidence {memory.confidence.toFixed(2)} · support {memory.support_count}</span>
+                  <p>{memory.content}</p>
+                  <button type="button" onClick={() => handleDeleteMemory(memory.memory_id)}>删除记忆</button>
+                </article>
+              ))}
+              {!memories.length ? <p className="empty">暂无长期记忆，提问或保存反馈后会自动沉淀。</p> : null}
+            </div>
           </div>
           <div className="panel">
             <h2>偏好候选</h2>
@@ -566,7 +647,7 @@ export function App() {
                 <p>{candidate.evidence}</p>
                 <span>confidence {candidate.confidence.toFixed(2)}</span>
                 <div className="button-row">
-                  <button onClick={() => acceptCandidate(candidate.candidate_id).then(refreshAll)} type="button">接受</button>
+                  <button onClick={() => acceptCandidate(candidate.candidate_id).then(() => refreshAll())} type="button">接受</button>
                   <button onClick={() => rejectCandidate(candidate.candidate_id).then(refreshCandidates)} type="button">拒绝</button>
                 </div>
               </article>

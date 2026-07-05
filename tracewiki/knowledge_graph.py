@@ -129,6 +129,157 @@ def build_knowledge_graph(cards: list[KnowledgeCard], spans: list[SourceSpan]) -
     }
 
 
+def build_graph_view(
+    graph: dict[str, Any],
+    view: str = "raw",
+    community_id: str | None = None,
+    limit: int = 300,
+) -> dict[str, Any]:
+    if view == "clustered":
+        visual = build_clustered_view(graph, limit=limit)
+    elif view == "focus":
+        visual = build_focus_view(graph, community_id=community_id, limit=limit)
+    else:
+        visual = build_raw_view(graph, limit=limit)
+    return {
+        "graph": visual,
+        "stats": {
+            "nodes": len(visual["nodes"]),
+            "lines": len(visual["lines"]),
+            "documents": int(graph.get("stats", {}).get("sources", 0)),
+            "segments": int(graph.get("stats", {}).get("spans", 0)),
+            "points": len([node for node in graph.get("nodes", []) if node.get("type") in {"card", "tag", "category"}]),
+            "relations": len(graph.get("edges", [])),
+            "evidence": int(graph.get("stats", {}).get("spans", 0)),
+            "communities": len(graph.get("communities", [])),
+            "rebuild_required": False,
+        },
+    }
+
+
+def build_raw_view(graph: dict[str, Any], limit: int = 300) -> dict[str, Any]:
+    source_nodes = graph.get("nodes", [])[:limit]
+    visible_ids = {node["id"] for node in source_nodes}
+    nodes = [visual_node(node) for node in source_nodes]
+    lines = [
+        visual_line(edge)
+        for edge in graph.get("edges", [])
+        if edge.get("source") in visible_ids and edge.get("target") in visible_ids
+    ][: limit * 2]
+    return {"rootId": nodes[0]["id"] if nodes else None, "nodes": nodes, "lines": lines}
+
+
+def build_clustered_view(graph: dict[str, Any], limit: int = 300) -> dict[str, Any]:
+    communities = graph.get("communities", [])[:limit]
+    nodes = [
+        {
+            "id": community["id"],
+            "text": community["label"],
+            "type": "CommunityNode",
+            "data": {
+                "type": "CommunityNode",
+                "community_id": community["id"],
+                "summary": ", ".join(community.get("card_titles", [])[:6]),
+                "content": "\n".join(community.get("card_titles", [])),
+                "node_count": community.get("size", 0),
+                "edge_count": community.get("span_count", 0),
+                "point_ids": [f"card:{card_id}" for card_id in community.get("card_ids", [])],
+                "tags": community.get("tags", []),
+            },
+        }
+        for community in communities
+    ]
+    card_to_community = {
+        f"card:{card_id}": community["id"]
+        for community in communities
+        for card_id in community.get("card_ids", [])
+    }
+    lines_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    for edge in graph.get("edges", []):
+        source_community = card_to_community.get(edge.get("source"))
+        target_community = card_to_community.get(edge.get("target"))
+        if not source_community or not target_community or source_community == target_community:
+            continue
+        left, right = sorted([source_community, target_community])
+        item = lines_by_pair.setdefault(
+            (left, right),
+            {"from": left, "to": right, "weight": 0.0, "relation_count": 0},
+        )
+        item["weight"] += float(edge.get("weight", 1.0))
+        item["relation_count"] += 1
+    lines = [
+        {
+            "id": f"community-edge:{left}->{right}",
+            "from": left,
+            "to": right,
+            "text": f"{line['relation_count']} relations",
+            "type": "community_relation",
+            "data": {"type": "community_relation", **line},
+        }
+        for (left, right), line in lines_by_pair.items()
+    ]
+    return {"rootId": nodes[0]["id"] if nodes else None, "nodes": nodes, "lines": lines}
+
+
+def build_focus_view(graph: dict[str, Any], community_id: str | None, limit: int = 300) -> dict[str, Any]:
+    communities = graph.get("communities", [])
+    community = next((item for item in communities if item.get("id") == community_id), None)
+    if not community:
+        return build_clustered_view(graph, limit=limit)
+    card_node_ids = {f"card:{card_id}" for card_id in community.get("card_ids", [])}
+    included_ids = set(card_node_ids)
+    included_edges = []
+    for edge in graph.get("edges", []):
+        if edge.get("source") in card_node_ids or edge.get("target") in card_node_ids:
+            included_edges.append(edge)
+            included_ids.add(edge.get("source"))
+            included_ids.add(edge.get("target"))
+    nodes = [
+        visual_node(node, community_id=community["id"])
+        for node in graph.get("nodes", [])
+        if node.get("id") in included_ids
+    ][:limit]
+    visible_ids = {node["id"] for node in nodes}
+    lines = [
+        visual_line(edge)
+        for edge in included_edges
+        if edge.get("source") in visible_ids and edge.get("target") in visible_ids
+    ][: limit * 2]
+    return {"rootId": nodes[0]["id"] if nodes else None, "nodes": nodes, "lines": lines}
+
+
+def visual_node(node: dict[str, Any], community_id: str | None = None) -> dict[str, Any]:
+    node_type = node.get("type", "card")
+    visual_type = "KnowledgePointNode" if node_type in {"card", "tag", "category"} else "EvidenceNode"
+    data = dict(node.get("data", {}))
+    data.update(
+        {
+            "type": visual_type,
+            "point_type": node_type,
+            "summary": data.get("summary", node.get("label", "")),
+            "content": data.get("content", data.get("summary", node.get("label", ""))),
+        }
+    )
+    if community_id:
+        data["community_id"] = community_id
+    return {"id": node["id"], "text": node["label"], "type": visual_type, "data": data}
+
+
+def visual_line(edge: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": edge.get("id"),
+        "from": edge.get("source"),
+        "to": edge.get("target"),
+        "text": edge.get("label", edge.get("type", "")),
+        "type": edge.get("type"),
+        "data": {
+            **edge.get("data", {}),
+            "type": edge.get("type"),
+            "weight": edge.get("weight", 1.0),
+        },
+    }
+
+
 def detect_card_communities(
     cards: list[KnowledgeCard],
     adjacency: dict[str, set[str]],
